@@ -3,14 +3,6 @@
 /user_images
 /model
 attendance_app.log
-enUser.db
-facenetApp.py 
-faUsers.db 
-key.py
-mask_image.jpg 
-mp.py 
-secret.key 
-spoof.py
-updatedDb.db
-users.db
-oldApp.py
+/bin
+mp.py
+.env

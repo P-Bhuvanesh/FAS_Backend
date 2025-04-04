@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import os
-import uuid
 import base64
 import numpy as np
 import cv2
@@ -18,7 +17,13 @@ from pymongo.errors import PyMongoError
 import pyttsx3
 import uvicorn 
 import random
+from dotenv import load_dotenv
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename='attendance_app.log'
+)
 logger = logging.getLogger(__name__)
 
 # Filter out MediaPipe warnings
@@ -27,6 +32,7 @@ class MediaPipeFilter(logging.Filter):
         return "inference_feedback_manager.cc" not in record.getMessage()
 
 logger.addFilter(MediaPipeFilter())
+
 
 app = FastAPI()
 
@@ -39,15 +45,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+@app.get("/")
+def root():
+    return {"python server":"running"}
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import tensorflow as tf
+
 
 tts_engine = pyttsx3.init()
 voices = tts_engine.getProperty("voices")
 
-# Set a different voice (try different indexes)
 tts_engine.setProperty("voice", voices[1].id)
-tts_engine.setProperty('rate', 200)  # Speed of speech
-tts_engine.setProperty('volume', 1.0)  # Volume level
+tts_engine.setProperty('rate', 200)
+tts_engine.setProperty('volume', 1.0)
 
 def speak_text(text):
     """Convert text to speech"""
@@ -55,13 +67,11 @@ def speak_text(text):
     tts_engine.runAndWait()
 
 
-# MongoDB Setup with improved connection handling
 def get_database_connection():
     try:
         MONGO_URI = "mongodb://localhost:27017/"
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         
-        # Test the connection
         client.admin.command('ismaster')
         
         db = client["userlogs"]
@@ -77,7 +87,6 @@ def get_database_connection():
         logger.error(f"Unexpected error connecting to MongoDB: {e}")
         return None
 
-# Global variable to store database connection
 db_connection = get_database_connection()
 
 
@@ -89,15 +98,43 @@ def generate_unique_id():
             return user_id
         
 class ImageData(BaseModel):
-    image: str  # Base64 encoded image
+    image: str  
 
 class User(BaseModel):
     name: str
+    email: str
     designation: str
     department: str
-    images: list[str]  # Base64 encoded images
+    images: list[str] 
 
-# Initialize Mediapipe and FaceNet
+def check_camera():
+    try:
+        cap = cv2.VideoCapture(0)
+        if cap is None or not cap.isOpened():
+            return False
+        cap.release()
+        return True
+    except:
+        return False
+
+@app.get("/status")
+def get_status():
+    
+    try:
+        client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=1000)
+        client.admin.command("ping")
+        database_status = True
+
+    except Exception as e:
+        database_status = False
+    
+    return {
+        "camera": check_camera(),
+        "database": database_status,
+        "server": True 
+    }
+
+
 mp_face_detection = mp.solutions.face_detection
 face_detection = mp_face_detection.FaceDetection()
 embedder = FaceNet()
@@ -108,7 +145,6 @@ def extract_embedding(image_data):
         nparr = np.frombuffer(base64.b64decode(image_data.split(",")[1]), np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        # Add error handling for image decoding
         if img is None:
             logger.error("Failed to decode image")
             return None
@@ -156,6 +192,11 @@ async def health_check():
         )
     return {"status": "healthy"}
 
+@app.get("/get_users")
+async def get_users():
+    users = list(users_collection.find({}, {"_id": 0, "email": 1}))
+    return {"users": users}
+
 @app.post("/add_user")
 async def add_user(user: User):
     try:
@@ -164,12 +205,10 @@ async def add_user(user: User):
 
         # Check if user already exists
         existing_user = db_connection['users_collection'].find_one({
-            "name": user.name,
-            "designation": user.designation,
-            "department": user.department
+            "email":user.email
         })
         if existing_user:
-            logger.warning(f"Duplicate user detected: {user.name}, {user.designation}, {user.department}")
+            logger.warning(f"Duplicate user detected: {user.email}")
             raise HTTPException(status_code=400, detail="User already exists")
 
         # user_id = str(uuid.uuid4())
@@ -195,8 +234,9 @@ async def add_user(user: User):
         try:
             user_id = generate_unique_id()
             db_connection['users_collection'].insert_one({
-                "_id": user_id,
+                "user_id": user_id,
                 "name": user.name,
+                "email": user.email,
                 "designation": user.designation,
                 "department": user.department,
                 "embeddings": embeddings_list
@@ -208,7 +248,7 @@ async def add_user(user: User):
             logger.error(f"Database error while inserting user {user.name}: {db_error}")
             raise HTTPException(status_code=500, detail="Database error while saving user")
 
-        return {"message": f"User {user.name} added successfully with facial embeddings!"}
+        return {"message": f"{user.name} your ID is: {user_id}"}
 
     except HTTPException as http_err:
         raise http_err
@@ -230,7 +270,8 @@ async def recognize_face(data: ImageData):
         users = db_connection['users_collection'].find({}, {"name": 1, "embeddings": 1})
 
         recognized_user = None
-        min_distance = 0.8  # Threshold for recognition
+        recognized_user_id = None
+        min_distance = 0.6  # Threshold for recognition
 
         for user in users:
             for stored_embedding in user["embeddings"]:
@@ -238,6 +279,7 @@ async def recognize_face(data: ImageData):
                 if distance < min_distance:
                     min_distance = distance
                     recognized_user = user["name"]
+                    recognized_user_id = user["user_id"]
 
         if recognized_user:
             return {"name": recognized_user}
@@ -263,10 +305,10 @@ async def check_in(data: ImageData):
         # user = await recognize_face(data)
         # name = user["name"]
 
-        users = db_connection['users_collection'].find({}, {"name": 1, "designation": 1, "department": 1, "embeddings": 1})
+        users = db_connection['users_collection'].find({}, {"user_id":1,"name": 1, "embeddings": 1})
         recognized_user = None
         user_details = None
-        min_distance = 0.8
+        min_distance = 0.6
         for user in users:
             for stored_embedding in user["embeddings"]:
                 distance = cosine(embedding, stored_embedding)
@@ -282,26 +324,22 @@ async def check_in(data: ImageData):
         today = datetime.date.today().strftime("%Y-%m-%d")
         now_time = datetime.datetime.now().strftime("%H:%M:%S")
 
-        existing_record = db_connection['attendance_collection'].find_one({"name": recognized_user,"designation":user_details["designation"],"department":user_details["department"], "date": today})
+        existing_record = db_connection['attendance_collection'].find_one({"user_id":user_details["user_id"], "date": today})
 
         if existing_record:
-            # Log the duplicate check-in attempt
             logger.warning(f"Duplicate check-in attempt for {recognized_user}")
             message = f"{recognized_user} has already checked in today."
             speak_text(message)
             raise HTTPException(status_code=400, detail=f"{recognized_user} has already checked in today")
 
         db_connection['attendance_collection'].insert_one({
-            "_id":user_details["_id"],
-            "name": recognized_user,
+            "user_id":user_details["user_id"],
             "date": today,
-            "designation": user_details["designation"],
-            "department": user_details["department"],
             "check_in": now_time,
             "check_out": None
         })
 
-        success_message = f"Hello, {recognized_user}. Good morning! You have been checked in."
+        success_message = f"Hello, {recognized_user}. You have been checked in."
         speak_text(success_message)
 
         logger.info(f"{recognized_user} checked in at {now_time}")
@@ -324,10 +362,10 @@ async def check_out(data: ImageData):
         if embedding is None:
             raise HTTPException(status_code=400, detail="No face detected")
 
-        users = db_connection['users_collection'].find({}, {"name": 1, "designation": 1, "department": 1, "embeddings": 1})
+        users = db_connection['users_collection'].find({}, {"user_id":1,"name": 1, "embeddings": 1})
         recognized_user = None
         user_details = None
-        min_distance = 0.85
+        min_distance = 0.6
 
         for user in users:
             for stored_embedding in user["embeddings"]:
@@ -345,9 +383,7 @@ async def check_out(data: ImageData):
         now_time = datetime.datetime.now().strftime("%H:%M:%S")
 
         existing_record = db_connection['attendance_collection'].find_one({
-            "name": recognized_user,
-            "designation": user_details["designation"],
-            "department": user_details["department"],
+            "user_id":user_details["user_id"],
             "date": today,
             "check_in": {"$exists": True} 
         })
@@ -363,7 +399,7 @@ async def check_out(data: ImageData):
             raise HTTPException(status_code=400, detail=message)
 
         db_connection['attendance_collection'].update_one(
-            {"_id": existing_record["_id"]}, 
+            {"_id": existing_record["_id"]},
             {"$set": {"check_out": now_time}}
         )
 
@@ -399,7 +435,7 @@ async def get_active_users(department: str = Query(None), designation: str = Que
         if designation:
             query["designation"] = designation
 
-        users_cursor = users_collection.find(query, {"_id": 0, "name": 1, "department": 1, "designation": 1})
+        users_cursor = users_collection.find(query, {"_id": 0,"user_id":1, "name": 1,"email":1, "department": 1, "designation": 1})
         users = list(users_cursor)
 
         if not users:
@@ -413,11 +449,5 @@ async def get_active_users(department: str = Query(None), designation: str = Que
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 if __name__ == "__main__":
-    print("!!!!!!!!!! PYTHON SERVER IS UP !!!!!!!!!!!!")
-    print("🔥 FastAPI server is starting... Visit http://localhost:8000/docs to check.")
-    uvicorn.run(
-        "monog:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True
-    )
+    print("\n\n!!!!!!!!!! PYTHON SERVER IS UP !!!!!!!!!!!!\n\n")
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
