@@ -18,6 +18,10 @@ import pyttsx3
 import uvicorn 
 import random
 from dotenv import load_dotenv
+from bson.json_util import dumps
+import json
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +30,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Filter out MediaPipe warnings
 class MediaPipeFilter(logging.Filter):
     def filter(self, record):
         return "inference_feedback_manager.cc" not in record.getMessage()
@@ -36,7 +39,6 @@ logger.addFilter(MediaPipeFilter())
 
 app = FastAPI()
 
-# Improved CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -69,8 +71,8 @@ def speak_text(text):
 
 def get_database_connection():
     try:
-        MONGO_URI = "mongodb://localhost:27017/"
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        MONGO_URL = os.getenv("MONGO_URL")
+        client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
         
         client.admin.command('ismaster')
         
@@ -119,15 +121,11 @@ def check_camera():
 
 @app.get("/status")
 def get_status():
-    
-    try:
-        client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=1000)
-        client.admin.command("ping")
-        database_status = True
 
-    except Exception as e:
-        database_status = False
-    
+    if db_connection is None: 
+        database_status = False 
+    else:
+        database_status = True    
     return {
         "camera": check_camera(),
         "database": database_status,
@@ -181,21 +179,6 @@ async def global_exception_handler(request, exc):
             "details": traceback.format_exc()
         }
     )
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint to verify server and database connection"""
-    if db_connection is None:
-        return JSONResponse(
-            status_code=500, 
-            content={"status": "Database connection failed"}
-        )
-    return {"status": "healthy"}
-
-@app.get("/get_users")
-async def get_users():
-    users = list(users_collection.find({}, {"_id": 0, "email": 1}))
-    return {"users": users}
 
 @app.post("/add_user")
 async def add_user(user: User):
@@ -416,17 +399,17 @@ async def check_out(data: ImageData):
         traceback.print_exc()
         raise
 
-db_connection = get_database_connection()
-if db_connection is None or "users_collection" not in db_connection:
-    raise Exception("Failed to connect to MongoDB")
+# db_connection = get_database_connection()
+# if db_connection is None or "users_collection" not in db_connection:
+#     raise Exception("Failed to connect to MongoDB")
 
-users_collection = db_connection.get("users_collection")
+# users_collection = db_connection.get("users_collection")
 
 @app.get("/active_users")
 async def get_active_users(department: str = Query(None), designation: str = Query(None)):
     try:
         # Ensure users_collection exists
-        if users_collection is None:
+        if db_connection is None:
             raise HTTPException(status_code=500, detail="Database connection error: users_collection is None")
 
         query = {}
@@ -435,7 +418,7 @@ async def get_active_users(department: str = Query(None), designation: str = Que
         if designation:
             query["designation"] = designation
 
-        users_cursor = users_collection.find(query, {"_id": 0,"user_id":1, "name": 1,"email":1, "department": 1, "designation": 1})
+        users_cursor = db_connection["users_collection"].find(query, {"_id": 0,"user_id":1, "name": 1,"email":1, "department": 1, "designation": 1})
         users = list(users_cursor)
 
         if not users:
@@ -447,6 +430,25 @@ async def get_active_users(department: str = Query(None), designation: str = Que
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+# client = MongoClient(os.getenv("MONGO_URL"))
+# db = client["userlogs"]
+@app.get("/get_users_check")
+def get_users():
+    users = list(db_connection["users_collection"].find({}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}))
+    return {"users": json.loads(dumps(users))}
+
+@app.get("/get_users")
+def get_users():
+    users = list(db_connection["users_collection"].find({}, {"_id": 0, "user_id": 1, "name": 1}))
+    return json.loads(dumps(users))
+
+@app.get("/get-attendance/{user_id}")
+def get_attendance(user_id: int):
+    attendance_records = list(db_connection["attendance_collection"].find({"user_id": user_id}, {"_id": 0, "date": 1, "check_in": 1, "check_out": 1}))
+    return json.loads(dumps(attendance_records))
+
 
 if __name__ == "__main__":
     print("\n\n!!!!!!!!!! PYTHON SERVER IS UP !!!!!!!!!!!!\n\n")
