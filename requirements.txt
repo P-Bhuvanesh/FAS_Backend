@@ -53,7 +53,6 @@ pydantic_core==2.33.0
 Pygments==2.19.1
 pymongo==4.11.3
 pyparsing==3.2.3
-pypiwin32==223
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.0
 pyttsx3==2.98
