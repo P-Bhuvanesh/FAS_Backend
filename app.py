@@ -291,7 +291,7 @@ async def check_in(data: ImageData):
         users = db_connection['users_collection'].find({}, {"user_id":1,"name": 1, "embeddings": 1})
         recognized_user = None
         user_details = None
-        min_distance = 0.6
+        min_distance = 0.45
         for user in users:
             for stored_embedding in user["embeddings"]:
                 distance = cosine(embedding, stored_embedding)
@@ -348,7 +348,7 @@ async def check_out(data: ImageData):
         users = db_connection['users_collection'].find({}, {"user_id":1,"name": 1, "embeddings": 1})
         recognized_user = None
         user_details = None
-        min_distance = 0.6
+        min_distance = 0.45
 
         for user in users:
             for stored_embedding in user["embeddings"]:
@@ -452,4 +452,4 @@ def get_attendance(user_id: int):
 
 if __name__ == "__main__":
     print("\n\n!!!!!!!!!! PYTHON SERVER IS UP !!!!!!!!!!!!\n\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
