@@ -14,7 +14,7 @@ import traceback
 import logging
 from pymongo import MongoClient, errors as mongo_errors
 from pymongo.errors import PyMongoError
-import pyttsx3
+# import pyttsx3
 import uvicorn 
 import random
 from dotenv import load_dotenv
@@ -56,17 +56,17 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import tensorflow as tf
 
 
-tts_engine = pyttsx3.init()
-voices = tts_engine.getProperty("voices")
+# tts_engine = pyttsx3.init()
+# voices = tts_engine.getProperty("voices")
 
-tts_engine.setProperty("voice", voices[1].id)
-tts_engine.setProperty('rate', 200)
-tts_engine.setProperty('volume', 1.0)
+# tts_engine.setProperty("voice", voices[1].id)
+# tts_engine.setProperty('rate', 200)
+# tts_engine.setProperty('volume', 1.0)
 
-def speak_text(text):
-    """Convert text to speech"""
-    tts_engine.say(text)
-    tts_engine.runAndWait()
+# def speak_text(text):
+#     """Convert text to speech"""
+#     tts_engine.say(text)
+#     tts_engine.runAndWait()
 
 
 def get_database_connection():
@@ -301,7 +301,7 @@ async def check_in(data: ImageData):
                     user_details = user
         
         if recognized_user == None:
-            speak_text("User not recognized. Please add user and try again.")
+            # speak_text("User not recognized. Please add user and try again.")
             raise HTTPException(status_code=400, detail="User not recognized")
 
         today = datetime.date.today().strftime("%Y-%m-%d")
@@ -312,7 +312,7 @@ async def check_in(data: ImageData):
         if existing_record:
             logger.warning(f"Duplicate check-in attempt for {recognized_user}")
             message = f"{recognized_user} has already checked in today."
-            speak_text(message)
+            # speak_text(message)
             raise HTTPException(status_code=400, detail=f"{recognized_user} has already checked in today")
 
         db_connection['attendance_collection'].insert_one({
@@ -323,7 +323,7 @@ async def check_in(data: ImageData):
         })
 
         success_message = f"Hello, {recognized_user}. You have been checked in."
-        speak_text(success_message)
+        # speak_text(success_message)
 
         logger.info(f"{recognized_user} checked in at {now_time}")
         return {"message": f"{recognized_user} checked in at {now_time}"}
@@ -359,7 +359,7 @@ async def check_out(data: ImageData):
                     user_details = user
 
         if recognized_user is None:
-            speak_text("User not recognized. Please try again after adding user.")
+            # speak_text("User not recognized. Please try again after adding user.")
             raise HTTPException(status_code=400, detail="User not recognized")
 
         today = datetime.date.today().strftime("%Y-%m-%d")
@@ -373,12 +373,12 @@ async def check_out(data: ImageData):
 
         if not existing_record:
             message = f"{recognized_user} has not checked in today."
-            speak_text(message)
+            # speak_text(message)
             raise HTTPException(status_code=400, detail=f"{recognized_user} has not checked in today")
 
         if existing_record.get("check_out"):
             message = f"{recognized_user} has already checked out today."
-            speak_text(message)
+            # speak_text(message)
             raise HTTPException(status_code=400, detail=message)
 
         db_connection['attendance_collection'].update_one(
@@ -387,7 +387,7 @@ async def check_out(data: ImageData):
         )
 
         success_message = f"Thank you, {recognized_user}. You have been checked out."
-        speak_text(success_message)
+        # speak_text(success_message)
 
         logger.info(f"{recognized_user} checked out at {now_time}")
         return {"message": f"{recognized_user} checked out at {now_time}"}
